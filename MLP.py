@@ -1,5 +1,9 @@
 from collections.abc import Callable
 import numpy as np
+import matplotlib.pyplot as plt
+import pandas as pd
+from sklearn.metrics import mean_squared_error
+import warnings
 
 
 def sigmoid(x):
@@ -8,6 +12,7 @@ def sigmoid(x):
 
 def linear(x):
     return x
+
 
 
 class Layer():      
@@ -50,8 +55,8 @@ class Layer():
         
         
     def set_biases(self, biases):
-        if len(biases) != self.nr_neurons:
-            raise Warning("The number of neurons on this layer seems to be different to the number of biases given.")
+        # if len(biases) != self.nr_neurons:
+            # raise Warning("The number of neurons on this layer seems to be different to the number of biases given.")
         self.biases = biases
         
     
@@ -100,3 +105,35 @@ class MLP():
         return summary_dict
               
         
+        
+        
+def plot_predictions(mlp:MLP, df_train:pd.DataFrame, df_test:pd.DataFrame):
+    warnings.filterwarnings('ignore')
+
+    y_train = mlp.predict(df_train[["x"]])
+    y_test = mlp.predict(df_test[["x"]])
+
+    fig, ax = plt.subplots(nrows=1,ncols=2, figsize=(10,4))
+
+    ax[0].set_title("Training data (MSE: " + str(mean_squared_error(df_train[["y"]], y_train)) + ")",fontsize=10)
+    ax[0].scatter(df_train["x"],df_train["y"], color="blue")
+    ax[0].scatter(df_train['x'], y_train, color='red')
+
+    ax[1].set_title("Test data (MSE: " + str(mean_squared_error(df_test[["y"]], y_test)) + ")",fontsize=10)
+    ax[1].scatter(df_test["x"],df_test["y"], color="blue")
+    ax[1].scatter(df_test['x'], y_test, color='red')
+
+    fig.suptitle("blue: true values, red: predicted values", fontsize=12)
+    plt.subplots_adjust(top=0.87)
+    warnings.filterwarnings('default')
+    
+    
+def plot_data(title:str, df_train:pd.DataFrame, df_test:pd.DataFrame):
+    fig, ax = plt.subplots(nrows=1,ncols=2, figsize=(10,4))
+
+    ax[0].scatter(x=df_train["x"], y = df_train['y'])
+    ax[0].set_title("Train data")
+    ax[1].scatter(x=df_test["x"], y = df_test['y'])
+    ax[1].set_title("Test data")
+
+    fig.suptitle(title)
