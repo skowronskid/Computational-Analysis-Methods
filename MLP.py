@@ -119,7 +119,7 @@ def plot_predictions(mlp:MLP, df_train:pd.DataFrame, df_test:pd.DataFrame):
     ax[0].scatter(df_train["x"],df_train["y"], color="blue")
     ax[0].scatter(df_train['x'], y_train, color='red')
 
-    ax[1].set_title("Test data (MSE: " + str(mean_squared_error(df_test[["y"]], y_test)) + ")",fontsize=10)
+    ax[1].set_title("Test data (MSE: " + str(mean_squared_error(df_test[["y"]], y_test))+ ")",fontsize=10)
     ax[1].scatter(df_test["x"],df_test["y"], color="blue")
     ax[1].scatter(df_test['x'], y_test, color='red')
 
