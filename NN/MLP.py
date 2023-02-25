@@ -6,13 +6,17 @@ from sklearn.metrics import mean_squared_error
 import warnings
 
 
-def sigmoid(x):
+def sigmoid(x,derivative = False):
+    if derivative:
+        sigm = sigmoid(x,False)
+        return sigm * (1 - sigm)
     return 1 / (1 + np.exp(-x))
 
 
-def linear(x):
+def linear(x,derivative = False):
+    if derivative:
+        return np.ones(x.shape)
     return x
-
 
 
 class Layer():      
@@ -55,6 +59,10 @@ class Layer():
         self.weights = weights
         self.function = func
         
+        # for backpropagation
+        self.z_value = None
+        self.delta = None
+        
         
     def forward(self, X:np.array):
         if any(el is None for el in [self.weights, self.biases, self.function]):
@@ -62,8 +70,22 @@ class Layer():
         if len(X.shape) == 1:
             X.reshape(1, X.shape[0])
         
-        Z = X @ self.weights.T + self.biases
-        return self.function(Z)
+        self.z_value = X @ self.weights.T + self.biases
+        return self.function(self.z_value)
+    
+
+    def backward(self, X, y):
+        # X is activation of previous aka it's forward output
+        # y is the true val? at least for the last layer
+        if self.function == linear:
+            self.delta = (self.function(self.z_value) - y)
+        else:
+            self.delta = (self.function(self.z_value, derivative=True)) @ (self.function(self.z_value) - y)
+        self.delta_W =  X.T @ self.delta 
+        self.delta_b = np.sum(self.delta, axis=0, keepdims=True)
+         ## TODO....    
+    
+
     
     
     def summary(self):
@@ -144,6 +166,14 @@ class MLP():
         return inputs      
     
     
+    def backpropagation(self, y_true):
+        layers = list(self.layers.values())
+        for i in range(len(layers)-1, -1, -1):
+            layers[i].backward(y_true)
+        ## TODO....    
+        
+
+
     def summary(self):
         summary_dict = {}
         for name,layer in zip(self.layers.keys(), self.layers.values()):
@@ -160,7 +190,7 @@ class MLP():
         
         
               
-        
+#-------------------------Helper functions-------------------------#
         
         
 def plot_predictions(mlp:MLP, df_train:pd.DataFrame, df_test:pd.DataFrame):
