@@ -9,7 +9,7 @@ import warnings
 def sigmoid(x,derivative = False):
     if derivative:
         sigm = sigmoid(x,False)
-        return sigm * (1 - sigm)
+        return np.multiply(sigm, (1 - sigm))
     return 1 / (1 + np.exp(-x))
 
 
@@ -64,27 +64,32 @@ class Layer():
         self.delta = None
         
         
+    def initialise(self, nr_neurons_prev):
+         # initialize weights, biases and function if not given before
+        if self.weights is None:
+            self.weights = np.random.uniform(0,1,size=(self.nr_neurons, nr_neurons_prev))
+        if self.biases is None:
+            self.biases = np.random.uniform(0,1,size=(1,self.nr_neurons))
+        if self.function is None:
+            self.function = sigmoid
+        
+        
     def forward(self, X:np.array):
-        if any(el is None for el in [self.weights, self.biases, self.function]):
-            raise AttributeError("Something in this layer is missing")
         if len(X.shape) == 1:
             X.reshape(1, X.shape[0])
         
-        self.z_value = X @ self.weights.T + self.biases
+        self.z_value = X @ self.weights.T +self.biases
         return self.function(self.z_value)
     
 
-    def backward(self, X, y):
-        # X is activation of previous aka it's forward output
-        # y is the true val? at least for the last layer
-        if self.function == linear:
-            self.delta = (self.function(self.z_value) - y)
-        else:
-            self.delta = (self.function(self.z_value, derivative=True)) @ (self.function(self.z_value) - y)
-        self.delta_W =  X.T @ self.delta 
-        self.delta_b = np.sum(self.delta, axis=0, keepdims=True)
-         ## TODO....    
-    
+    def backward(self, delta_next, W_next):
+        # self delta == e^nr_of_layer
+        
+
+        self.delta = np.multiply(
+            self.function(self.z_value, derivative=True),
+            delta_next @ W_next
+        )
 
     
     
@@ -161,16 +166,43 @@ class MLP():
         
         
     def predict(self,inputs):
+        inputs = np.array(inputs)
         for layer in self.layers.values():
             inputs = layer.forward(inputs)
         return inputs      
     
     
-    def backpropagation(self, y_true):
+    def backpropagation(self, X, y, learning_rate=0.00001 ):
+        X = np.array(X)
+        y = np.array(y)
         layers = list(self.layers.values())
-        for i in range(len(layers)-1, -1, -1):
-            layers[i].backward(y_true)
-        ## TODO....    
+        layers[-1].delta = np.multiply(                             
+            layers[-1].function(layers[-1].z_value) - y,
+            layers[-1].function(layers[-1].z_value, derivative=True)
+        )
+        for i in range(len(layers)-2, -1, -1): # from second last layer to first layer
+            layers[i].backward(delta_next = layers[i+1].delta, W_next=layers[i+1].weights)
+
+        layers[0].weights -= learning_rate * layers[0].delta.T @ layers[0].function(X)
+        layers[0].biases -= learning_rate * np.sum(layers[0].delta,axis=0)#/layers[0].delta.shape[0]
+        
+        for i in range(1,len(layers)):
+            layers[i].weights -= learning_rate *  layers[i].delta.T @ layers[i].function(layers[i-1].z_value)
+            layers[i].biases -= learning_rate * np.sum(layers[i].delta,axis=0)#/layers[0].delta.shape[0]
+            
+            
+            
+    def fit(self,X,y, epochs=10, learning_rate=0.00001):
+        layers = list(self.layers.values())
+        layers[0].initialise(X.shape[1] if len(X.shape) != 1 else 1)
+        for i in range(1,len(layers)):
+            layers[i].initialise(layers[i-1].nr_neurons)
+        for epoch in range(epochs):
+            self.predict(X)
+            self.backpropagation(X,y,learning_rate=learning_rate)
+            print(f"{epoch/epochs}", end='\r')
+
+
         
 
 
