@@ -1,7 +1,9 @@
 from collections.abc import Callable
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.colors as colors
 import pandas as pd
+import seaborn as sns
 from sklearn.metrics import mean_squared_error
 import warnings
 import time
@@ -171,6 +173,30 @@ class MLP():
             summary_dict[f"Layer{i}"] = layer.summary()
         return summary_dict
     
+    
+    def plot_weigths(self):
+        weights = self.get_weights()
+        biases = self.get_biases()
+        
+
+        plt.set_cmap("coolwarm")
+
+        fig, axs = plt.subplots(len(weights), 2, figsize=(16, 8*len(weights)))
+
+        for i, (w, b) in enumerate(zip(weights,biases)):
+            # plot weights
+            sns.heatmap(w, ax=axs[i][0], square=True, annot=True, fmt=".1f", cbar=False, cmap="bwr", norm=colors.CenteredNorm())
+            axs[i][0].set_title(f"Layer {i+1} weights")
+            axs[i][0].set_xticklabels(range(1, w.shape[1]+1))
+            axs[i][0].set_yticklabels(range(1, w.shape[0]+1))
+            
+            # plot biases
+            sns.heatmap(b, ax=axs[i][1], square=True, annot=True, fmt=".1f", cbar=False, cmap="bwr", norm=colors.CenteredNorm())
+            
+            axs[i][1].set_title(f"Layer {i+1} biases")
+            axs[i][1].set_xticklabels(range(1, b.shape[1]+1))
+            axs[i][1].set_yticklabels(range(1, b.shape[0]+1))
+        
         
               
 #-------------------------Helper functions-------------------------#
