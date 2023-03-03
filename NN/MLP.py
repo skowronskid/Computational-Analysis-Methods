@@ -4,222 +4,173 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from sklearn.metrics import mean_squared_error
 import warnings
+import time
 
 
 def sigmoid(x,derivative = False):
     if derivative:
-        sigm = sigmoid(x,False)
-        return np.multiply(sigm, (1 - sigm))
+        return x * (1 - x)
     return 1 / (1 + np.exp(-x))
 
 
 def linear(x,derivative = False):
     if derivative:
-        return np.ones(x.shape)
+        return np.ones_like(x)
     return x
 
 
-class Layer():      
-    """_summary_
-    A layer class for a multi-layer perceptron
-    
-    _parameters_
-    nr_neurons: int
-        The number of neurons in the layer. 
-    weights: np.array
-        The weights of the layer. The shape of the array should be (nr_neurons, nr_inputs). Each row represents the weights of one neuron.
-    biases: np.array
-        The biases of the layer. The shape of the array should be (nr_neurons, 1). Each row represents the bias of one neuron.
-    func: Callable
-        The activation function of the layer. The function should take a numpy array as input and return a numpy array as output.
-    
-    _methods_
-    forward(X)
-        Calculates the output of the layer for the given input X and returns it. 
-    summary()
-        Returns a dictionary containing the weights, biases and function of the layer. 
-    set_weights(weights)
-        Sets the weights of the layer.
-    set_biases(biases)
-        Sets the biases of the layer
-    set_function(func)
-        Sets the function of the layer
-    set_nr_neurons(nr_neurons)
-        Sets the number of neurons of the layer
-    """
-    
-    
-    def __init__(self, nr_neurons, weights:np.array=None, biases:np.array=None, func:Callable=None):
-        if not (weights is None and biases is None) and nr_neurons!=len(weights)!=len(biases):
-            raise Warning("Incorrect number neurons or shapes of either weights or biases")
-              
+
+
+class Layer():
+    def __init__(self, input_dim, output_dim, weights=None, bias=None,activation=None):
+        # output dim is also the number of neurons in the layer
+        self.weights = weights if not weights is None else np.random.uniform(0,1,size= (input_dim, output_dim)) * 0.01
+        self.bias =  bias if not bias is None else np.random.uniform(0,1,size=(1, output_dim))
+        self.activation = activation if not activation is None else sigmoid
         
-        self.nr_neurons = nr_neurons
-        self.biases = biases
+    
+    def forward(self, inputs):
+        self.inputs = inputs
+        outputs = np.dot(inputs, self.weights) + self.bias
+        self.outputs = self.activation(outputs)
+        return self.outputs
+    
+    
+    def backward(self, d_outputs):
+        d_activation = self.activation(self.outputs, derivative=True)
+        
+        d_inputs = (d_outputs * d_activation) @ self.weights.T
+        d_weights = self.inputs.T @ (d_outputs * d_activation)
+        d_bias = np.sum(d_outputs * d_activation, axis=0, keepdims=True)
+        
+        return d_weights, d_bias, d_inputs
+    
+    
+    def set_weights(self, weights:np.array):
         self.weights = weights
-        self.function = func
-        
-        # for backpropagation
-        self.z_value = None
-        self.delta = None
         
         
-    def initialise(self, nr_neurons_prev):
-         # initialize weights, biases and function if not given before
-        if self.weights is None:
-            self.weights = np.random.uniform(0,1,size=(self.nr_neurons, nr_neurons_prev))
-        if self.biases is None:
-            self.biases = np.random.uniform(0,1,size=(1,self.nr_neurons))
-        if self.function is None:
-            self.function = sigmoid
+    def set_biases(self, biases:np.array):
+        self.bias = biases
         
-        
-    def forward(self, X:np.array):
-        if len(X.shape) == 1:
-            X.reshape(1, X.shape[0])
-        
-        self.z_value = X @ self.weights.T +self.biases
-        return self.function(self.z_value)
     
-
-    def backward(self, delta_next, W_next):
-        # self delta == e^nr_of_layer
-        
-
-        self.delta = np.multiply(
-            self.function(self.z_value, derivative=True),
-            delta_next @ W_next
-        )
+    def set_function(self,activation:Callable):
+        self.activation = activation
 
     
     
     def summary(self):
         dict = {
             "weights" : self.weights,
-            "biases" : self.biases,
-            "function" : self.function
+            "biases" : self.bias,
+            "function" : self.activation
         }
         return dict
     
-    
-    def set_weights(self, weights:np.array):
-        if weights.shape[0] != self.nr_neurons:
-            raise Warning("The number of neurons on this layer seems to be different to the number of weights given. Maybe use reshape to state the shape explicitly")
-        self.weights = weights
-        
-        
-    def set_biases(self, biases:np.array):
-        # if len(biases) != self.nr_neurons:
-            # raise Warning("The number of neurons on this layer seems to be different to the number of biases given.")
-        self.biases = biases
-        
-    
-    def set_function(self,func:Callable):
-        self.function = func
-        
-    
-    def set_nr_neurons(self,nr_neurons:int):
-        self.nr_neurons = nr_neurons
         
      
     
 
 
 
-class MLP():           
-    """_summary_
-    A multi-layer perceptron class
+class MLP():
     
-    _parameters_
-    layers: dict
-        A dictionary containing the layers of the MLP. The keys are the names of the layers and the values are the layers themselves.
-    weights: list
-        A list containing the weights of the MLP. The weights are stored in the same order as the layers in the layers dictionary.
-    biases: list
-        A list containing the biases of the MLP. The biases are stored in the same order as the layers in the layers dictionary.
-    
-    _methods_
-    add(layer:Layer, name:str=None)
-        Adds a layer to the MLP. The name of the layer is optional. If no name is given, the name of the layer will be 'Layer' + the number of layers already in the MLP.
-    predict(inputs)
-        Predicts the output for the given input.
-    summary()
-        Returns a dictionary containing the weights, biases and functions of all layers in the MLP.
-    """
-    
-    
-    def __init__(self):
-        self.layers = {}
-        self.weights = []
-        self.biases = []
-
-    
-    def add(self, layer:Layer, name:str = None) -> None:
-        if name is None:
-            name = f'Layer{len(self.layers)}'
-        if name in self.layers.keys():
-            raise KeyError(f"A layer with name {name} is already in this MLP")
+    def __init__(self, input_dim=None, output_dim=None, hidden_dims=None):
+        self.input_dim = input_dim
+        self.output_dim = output_dim
+        self.layers = []
+        if not input_dim is None and not output_dim is None and not hidden_dims is None:
+            # create this network automatically if all parameters are given
+            self.layers.append(Layer(input_dim, hidden_dims[0], activation=sigmoid))
+            for i in range(1, len(hidden_dims)):
+                self.layers.append(Layer(hidden_dims[i-1], hidden_dims[i], activation=sigmoid))
+            self.layers.append(Layer(hidden_dims[-1], output_dim, activation=linear))
         
-        self.layers[name] = layer
-        self.weights.append(layer.weights)
-        self.biases.append(layer.biases)
+    
+    def add(self, layer):
+        self.layers.append(layer)
         
-        
-    def predict(self,inputs):
-        inputs = np.array(inputs)
-        for layer in self.layers.values():
-            inputs = layer.forward(inputs)
-        return inputs      
+    
+    def predict(self, inputs):
+        outputs = inputs
+        for layer in self.layers:
+            outputs = layer.forward(outputs)
+        return outputs
     
     
-    def backpropagation(self, X, y, learning_rate=0.00001 ):
-        X = np.array(X)
-        y = np.array(y)
-        layers = list(self.layers.values())
-        layers[-1].delta = np.multiply(                             
-            layers[-1].function(layers[-1].z_value) - y,
-            layers[-1].function(layers[-1].z_value, derivative=True)
-        )
-        for i in range(len(layers)-2, -1, -1): # from second last layer to first layer
-            layers[i].backward(delta_next = layers[i+1].delta, W_next=layers[i+1].weights)
-
-        layers[0].weights -= learning_rate * layers[0].delta.T @ layers[0].function(X)
-        layers[0].biases -= learning_rate * np.sum(layers[0].delta,axis=0)#/layers[0].delta.shape[0]
-        
-        for i in range(1,len(layers)):
-            layers[i].weights -= learning_rate *  layers[i].delta.T @ layers[i].function(layers[i-1].z_value)
-            layers[i].biases -= learning_rate * np.sum(layers[i].delta,axis=0)#/layers[0].delta.shape[0]
+    def fit(self, X, y, epochs, batch_size, learning_rate, shuffle=True, loss_stop=0.0001):
+        X = np.array(X).reshape(-1, self.input_dim)
+        y = np.array(y).reshape(-1, self.output_dim)
+        start_time = time.time()
+        iter_loss = [mean_squared_error(y, self.predict(X))]
+        n_samples = X.shape[0]
+        if batch_size == -1 or batch_size > n_samples:
+            batch_size = n_samples
             
-            
-            
-    def fit(self,X,y, epochs=10, learning_rate=0.00001):
-        layers = list(self.layers.values())
-        layers[0].initialise(X.shape[1] if len(X.shape) != 1 else 1)
-        for i in range(1,len(layers)):
-            layers[i].initialise(layers[i-1].nr_neurons)
+        n_batches = n_samples // batch_size
+        
+        
         for epoch in range(epochs):
-            self.predict(X)
-            self.backpropagation(X,y,learning_rate=learning_rate)
-            print(f"{epoch/epochs}", end='\r')
+            epoch_loss = 0
+            
+            if shuffle:
+                permutation = np.random.permutation(n_samples)
+                X_ = X[permutation]
+                y_ = y[permutation]
+            
+            
+            for batch in range(n_batches):
+                batch_start = batch * batch_size
+                batch_end = (batch+1) * batch_size
+                X_batch = X_[batch_start:batch_end]
+                y_batch = y_[batch_start:batch_end]
+                
+                # forward pass
+                outputs = self.predict(X_batch)
+                loss = mean_squared_error(y_batch, outputs)
+                epoch_loss += loss
+                
+                # backward pass
+                d_outputs = (outputs - y_batch) / batch_size
+                for layer in reversed(self.layers):
+                    d_weights, d_bias, d_outputs = layer.backward(d_outputs)
+                    layer.weights -= learning_rate * d_weights
+                    layer.bias -= learning_rate * d_bias
 
+                
+            loss_full = mean_squared_error(y, self.predict(X))
+            if loss_full < loss_stop:
+                iter_loss.append(loss_full)
+                epochs = epoch + 1
+                print(f"Loss {loss_full} reached  after {epoch+1} epochs", end="\r")
+                return time.time() - start_time, iter_loss, epochs
+                
+            if (epoch+1)%100 == 0:
+                print(f"Epoch {epoch+1}/{epochs}, Loss: {epoch_loss/n_batches}",end="\r")
+                iter_loss.append(mean_squared_error(y, self.predict(X)))
+        return time.time() - start_time, iter_loss, epochs
 
         
+    def get_weights(self):
+        weights = []
+        for layer in self.layers:
+            weights.append(layer.weights)
+        return weights
+    
+
+    def get_biases(self):
+        biases = []
+        for layer in self.layers:
+            biases.append(layer.bias)
+        return biases
 
 
     def summary(self):
         summary_dict = {}
-        for name,layer in zip(self.layers.keys(), self.layers.values()):
-            summary_dict[name] = layer.summary()
+        for i,layer in enumerate(self.layers):
+            summary_dict[f"Layer{i}"] = layer.summary()
         return summary_dict
     
-
-    def pop(self):
-        if len(self.layers) == 0:
-            raise Warning("There are no layers in this MLP")
-        self.layers.popitem()
-        self.weights.pop()
-        self.biases.pop()
-        
         
               
 #-------------------------Helper functions-------------------------#
@@ -232,7 +183,7 @@ def plot_predictions(mlp:MLP, df_train:pd.DataFrame, df_test:pd.DataFrame):
     y_train = mlp.predict(df_train[["x"]])
     y_test = mlp.predict(df_test[["x"]])
 
-    fig, ax = plt.subplots(nrows=1,ncols=2, figsize=(10,4))
+    fig, ax = plt.subplots(nrows=1,ncols=2,figsize=(10,4))
 
     ax[0].set_title("Training data (MSE: " + str(mean_squared_error(df_train[["y"]], y_train)) + ")",fontsize=10)
     ax[0].scatter(df_train["x"],df_train["y"], color="blue")
