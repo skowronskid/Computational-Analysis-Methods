@@ -38,14 +38,14 @@ class Layer():
         return self.outputs
     
     
-    def backward(self, d_outputs):
-        d_activation = self.activation(self.outputs, derivative=True)
+    def backward(self, delta_outputs):
+        derivative_activation = self.activation(self.outputs, derivative=True)
         
-        d_inputs = (d_outputs * d_activation) @ self.weights.T
-        d_weights = self.inputs.T @ (d_outputs * d_activation)
-        d_bias = np.sum(d_outputs * d_activation, axis=0, keepdims=True)
+        delta_inputs = (delta_outputs * derivative_activation) @ self.weights.T
+        delta_weights = self.inputs.T @ (delta_outputs * derivative_activation)
+        delta_bias = np.sum(delta_outputs * derivative_activation, axis=0, keepdims=True)
         
-        return d_weights, d_bias, d_inputs
+        return delta_weights, delta_bias, delta_inputs
     
     
     def set_weights(self, weights:np.array):
@@ -133,11 +133,11 @@ class MLP():
                 epoch_loss += loss
                 
                 # backward pass
-                d_outputs = (outputs - y_batch) / batch_size
+                delta_outputs = (outputs - y_batch) / batch_size
                 for layer in reversed(self.layers):
-                    d_weights, d_bias, d_outputs = layer.backward(d_outputs)
-                    layer.weights -= learning_rate * d_weights
-                    layer.bias -= learning_rate * d_bias
+                    delta_weights, delta_bias, delta_outputs = layer.backward(delta_outputs)
+                    layer.weights -= learning_rate * delta_weights
+                    layer.bias -= learning_rate * delta_bias
 
                 
             loss_full = mean_squared_error(y, self.predict(X))
