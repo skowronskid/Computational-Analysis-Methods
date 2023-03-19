@@ -26,9 +26,17 @@ def linear(x,derivative = False):
 class Layer():
     def __init__(self, input_dim, output_dim, weights=None, bias=None,activation=None):
         # output dim is also the number of neurons in the layer
-        self.weights = weights if not weights is None else np.random.uniform(0,1,size= (input_dim, output_dim)) * 0.01
-        self.bias =  bias if not bias is None else np.random.uniform(0,1,size=(1, output_dim))
+        self.weights = weights if not weights is None else np.random.normal(0,1,size= (input_dim, output_dim)) * 0.01
+        self.bias =  bias if not bias is None else np.random.normal(0,1,size=(1, output_dim))
         self.activation = activation if not activation is None else sigmoid
+        self.momentum_weights = np.zeros_like(self.weights)
+        self.momentum_bias = np.zeros_like(self.bias)
+        self.gradient_weights = np.zeros_like(self.weights)
+        self.gradient_bias = np.zeros_like(self.bias)
+        self.moving_gradient_weights = np.zeros_like(self.weights)
+        self.moving_gradient_bias = np.zeros_like(self.bias)        
+
+
         
     
     def forward(self, inputs):
@@ -38,14 +46,52 @@ class Layer():
         return self.outputs
     
     
-    def backward(self, delta_outputs):
+    def backward(self, delta_outputs,momentum_coef, normalisation_coef):
         derivative_activation = self.activation(self.outputs, derivative=True)
         
         delta_inputs = (delta_outputs * derivative_activation) @ self.weights.T
         delta_weights = self.inputs.T @ (delta_outputs * derivative_activation)
         delta_bias = np.sum(delta_outputs * derivative_activation, axis=0, keepdims=True)
-        
+
+        if normalisation_coef !=0 and momentum_coef !=0:
+            # adam optimizer
+            epsilon = 1e-8
+            self.gradient_weights = delta_weights 
+            self.gradient_bias = delta_bias
+            
+            self.momentum_weights = momentum_coef*self.momentum_weights + (1-momentum_coef)*self.gradient_weights
+            self.momentum_bias = momentum_coef*self.momentum_bias + (1-momentum_coef)*self.gradient_bias
+            
+            self.moving_gradient_weights = normalisation_coef*self.moving_gradient_weights + (1-normalisation_coef)*np.square(self.gradient_weights)
+            self.moving_gradient_bias = normalisation_coef*self.moving_gradient_bias + (1-normalisation_coef)*np.square(self.gradient_bias)
+            
+            delta_weights =  np.divide(self.momentum_weights,np.sqrt(self.moving_gradient_weights) + epsilon)
+            delta_bias = np.divide(self.momentum_bias,np.sqrt(self.moving_gradient_bias) + epsilon)
+            
+            
+
+        elif normalisation_coef !=0:
+            epsilon = 1e-8 #prevent division by 0 if is gradient equal to 0
+
+            self.gradient_weights = delta_weights 
+            self.gradient_bias = delta_bias
+            
+            self.moving_gradient_weights = self.moving_gradient_weights*normalisation_coef + (1-normalisation_coef)*np.square(self.gradient_weights)
+            self.moving_gradient_bias = self.moving_gradient_bias*normalisation_coef + (1-normalisation_coef)*np.square(self.gradient_bias)
+
+            delta_weights =  np.divide(self.gradient_weights,np.sqrt(self.moving_gradient_weights) + epsilon)
+            delta_bias = np.divide(self.gradient_bias,np.sqrt(self.moving_gradient_bias) + epsilon)
+
+
+        elif momentum_coef != 0:
+            self.momentum_weights = delta_weights - momentum_coef*self.momentum_weights
+            self.momentum_bias =  delta_bias - momentum_coef*self.momentum_bias
+            delta_weights = self.momentum_weights 
+            delta_bias = self.momentum_bias
+
         return delta_weights, delta_bias, delta_inputs
+    
+    
     
     
     def set_weights(self, weights:np.array):
@@ -100,16 +146,22 @@ class MLP():
         return outputs
     
     
-    def fit(self, X, y, epochs, batch_size, learning_rate, shuffle=True, loss_stop=0.0001):
+    def fit(self, X, y, epochs, batch_size, learning_rate, shuffle=True, loss_stop=0.0001, momentum_coef=0.9, normalisation_coef=0.999, verbose=True):
         X = np.array(X).reshape(-1, self.input_dim)
         y = np.array(y).reshape(-1, self.output_dim)
         start_time = time.time()
         iter_loss = [mean_squared_error(y, self.predict(X))]
+        times = [0]
         n_samples = X.shape[0]
         if batch_size == -1 or batch_size > n_samples:
             batch_size = n_samples
             
         n_batches = n_samples // batch_size
+
+        if not (momentum_coef >= 0 and momentum_coef < 1):
+            raise AttributeError("Momentum decay coefficient should be in [0,1)")
+        if not (normalisation_coef >= 0 and normalisation_coef < 1):
+            raise AttributeError("Normalisation decay coefficient should be in [0,1)")
         
         
         for epoch in range(epochs):
@@ -135,22 +187,28 @@ class MLP():
                 # backward pass
                 delta_outputs = (outputs - y_batch) / batch_size
                 for layer in reversed(self.layers):
-                    delta_weights, delta_bias, delta_outputs = layer.backward(delta_outputs)
+                    delta_weights, delta_bias, delta_outputs = layer.backward(delta_outputs,momentum_coef=momentum_coef, normalisation_coef=normalisation_coef)                   
                     layer.weights -= learning_rate * delta_weights
                     layer.bias -= learning_rate * delta_bias
 
-                
+            
+            
             loss_full = mean_squared_error(y, self.predict(X))
             if loss_full < loss_stop:
                 iter_loss.append(loss_full)
+                times.append(time.time() - start_time)
                 epochs = epoch + 1
-                print(f"Loss {loss_full} reached  after {epoch+1} epochs", end="\r")
-                return time.time() - start_time, iter_loss, epochs
-                
-            if (epoch+1)%100 == 0:
-                print(f"Epoch {epoch+1}/{epochs}, Loss: {epoch_loss/n_batches}",end="\r")
+                if verbose:
+                    print(f"Loss {loss_full} reached  after {epoch+1} epochs", end="\r")
+                return times, iter_loss, epochs
+            if (epoch+1)%10 == 0:
                 iter_loss.append(mean_squared_error(y, self.predict(X)))
-        return time.time() - start_time, iter_loss, epochs
+                times.append( time.time() - start_time)    
+            
+            if (epoch+1)%100 == 0 and verbose:
+                print(f"Epoch {epoch+1}/{epochs}, Loss: {epoch_loss/n_batches}",end="\r")
+
+        return times, iter_loss, epochs
 
         
     def get_weights(self):
@@ -234,3 +292,108 @@ def plot_data(title:str, df_train:pd.DataFrame, df_test:pd.DataFrame):
     ax[1].set_title("Test data")
 
     fig.suptitle(title)
+    
+
+def benchmark(x,y,hidden,epochs,range_, learning_rate_base,learning_rate_rmsprop,learning_rate_momentum,learning_rate_adam,momentum_coef,normalisation_coef, adam_coefs, batch_size, loss_stop):
+    input = x.shape[1] if len(x.shape) > 1 else 1
+    output =  y.shape[1] if len(y.shape) > 1 else 1
+    end_time_base = []
+    end_time_rmsprop = []
+    end_time_momentum = []
+    end_time_adam = []
+    end_epoch_base = []
+    end_epoch_rmsprop = []
+    end_epoch_momentum = []
+    end_epoch_adam = []
+    end_mse_base = []
+    end_mse_rmsprop = []
+    end_mse_momentum = []
+    end_mse_adam = []
+
+
+
+    times_base = []
+    times_rmsprop = []
+    times_momentum = []
+    times_adam = []
+    mse_base = []
+    mse_rmsprop = []
+    mse_momentum = []
+    mse_adam = []
+        
+    for i in range(range_):
+        print(f"Iteration:{i+1}/{range_}",end="\r") 
+        
+        #no normalisation or momentum
+        mlp1 = MLP(input_dim=input, output_dim=output, hidden_dims=hidden) 
+        times1, mse1, epochs1 = mlp1.fit(x, y, epochs=epochs, learning_rate=learning_rate_base,normalisation_coef=0, momentum_coef=0, batch_size=batch_size, loss_stop=loss_stop, verbose=False)
+        times_base.append(times1)
+        mse_base.append(mse1)
+        end_epoch_base.append(epochs1)
+        end_time_base.append(times1[-1])
+        end_mse_base.append(mse1[-1])
+        #rmsprop
+        mlp2 = MLP(input_dim=input, output_dim=output, hidden_dims=hidden) 
+        times2, mse2, epochs2 = mlp2.fit(x, y, epochs=epochs, learning_rate=learning_rate_rmsprop,normalisation_coef=normalisation_coef, momentum_coef=0, batch_size=batch_size, loss_stop=loss_stop,verbose=False)
+        times_rmsprop.append(times2)
+        mse_rmsprop.append(mse2)
+        end_epoch_rmsprop.append(epochs2)
+        end_time_rmsprop.append(times2[-1])
+        end_mse_rmsprop.append(mse2[-1])
+        #momentum
+        mlp3 = MLP(input_dim=input, output_dim=output, hidden_dims=hidden) 
+        times3, mse3, epochs3 = mlp3.fit(x, y, epochs=epochs, learning_rate=learning_rate_momentum,normalisation_coef=0, momentum_coef=momentum_coef, batch_size=batch_size, loss_stop=loss_stop,verbose=False)
+        times_momentum.append(times3)
+        mse_momentum.append(mse3)
+        end_epoch_momentum.append(epochs3)
+        end_time_momentum.append(times3[-1])
+        end_mse_momentum.append(mse3[-1])
+        #adam
+        mlp4 = MLP(input_dim=input, output_dim=output, hidden_dims=hidden) 
+        times4, mse4, epochs4 = mlp4.fit(x, y, epochs=epochs, learning_rate=learning_rate_adam,normalisation_coef=adam_coefs[0], momentum_coef=adam_coefs[1], batch_size=batch_size, loss_stop=loss_stop,verbose=False)
+        times_adam.append(times4)
+        mse_adam.append(mse4)
+        end_epoch_adam.append(epochs4)
+        end_time_adam.append(times4[-1])
+        end_mse_adam.append(mse4[-1])
+
+
+    results = pd.DataFrame({"end_time_base":end_time_base,"end_time_rmsprop":end_time_rmsprop,"end_time_momentum":end_time_momentum,"end_time_adam":end_time_adam,
+                        "end_epoch_base":end_epoch_base,"end_epoch_rmsprop":end_epoch_rmsprop,"end_epoch_momentum":end_epoch_momentum,"end_epoch_adam":end_epoch_adam,
+                        "end_mse_base":end_mse_base,"end_mse_rmsprop":end_mse_rmsprop,"end_mse_momentum":end_mse_momentum,"end_mse_adam":end_mse_adam})
+    
+    
+    # # --- Plotting ---
+    base_index = results.index[results['end_time_base']==results['end_time_base'].quantile(interpolation='nearest')][0]
+    rmsprop_index = results.index[results['end_time_rmsprop']==results['end_time_rmsprop'].quantile(interpolation='nearest')][0]
+    momentum_index = results.index[results['end_time_momentum']==results['end_time_momentum'].quantile(interpolation='nearest')][0]
+    adam_index = results.index[results['end_time_adam']==results['end_time_adam'].quantile(interpolation='nearest')][0]
+    labels = ["base", "rmsprop", "momentum", "adam"]
+    base = results.loc[base_index].filter(regex='base').values
+    rmsprop = results.loc[rmsprop_index].filter(regex='rmsprop').values
+    momentum = results.loc[momentum_index].filter(regex='momentum').values 
+    adam = results.loc[adam_index].filter(regex='adam').values
+
+    fig, axes = plt.subplots(1, 2, width_ratios=[1, 3], figsize=(20,8))
+
+    axes[0] = sns.barplot(x=labels,y=[base[0],rmsprop[0],momentum[0],adam[0]], ax=axes[0])
+    axes[0].set_title("Median training time" )
+    axes[0].set_ylabel("time (s)")
+
+
+
+    axes[1] = sns.lineplot(x=times_base[base_index], y = mse_base[base_index], ax=axes[1], label="base")
+    axes[1] = sns.lineplot(x=times_rmsprop[rmsprop_index], y = mse_rmsprop[rmsprop_index], ax=axes[1], label="rmsprop")
+    axes[1] = sns.lineplot(x=times_momentum[momentum_index], y = mse_momentum[momentum_index], ax=axes[1],label = "momentum")
+    axes[1] = sns.lineplot(x=times_adam[adam_index], y = mse_adam[adam_index], ax=axes[1], label="adam")
+    axes[1].autoscale(enable=True)
+    axes[1].set_yscale("symlog")
+    axes[1].set_title("Convergence of the loss function")
+    axes[1].set_xlabel("time (s)")
+
+    
+    
+    
+    return results
+
+
