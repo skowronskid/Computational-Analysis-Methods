@@ -4,9 +4,11 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as colors
 import pandas as pd
 import seaborn as sns
-from sklearn.metrics import mean_squared_error
+from sklearn.metrics import mean_squared_error, log_loss, f1_score, confusion_matrix
 import warnings
 import time
+from functools import partial
+
 
 
 def sigmoid(x,derivative = False):
@@ -21,13 +23,19 @@ def linear(x,derivative = False):
     return x
 
 
+def softmax(x,derivative = False):
+    if derivative:
+        x = softmax(x)
+        return x * (1 - x)
+    exp_x = np.exp(x - np.max(x))
+    return exp_x / np.sum(exp_x, axis=1, keepdims=True)
 
 
 class Layer():
     def __init__(self, input_dim, output_dim, weights=None, bias=None,activation=None):
         # output dim is also the number of neurons in the layer
-        self.weights = weights if not weights is None else np.random.normal(0,1,size= (input_dim, output_dim)) * 0.01
-        self.bias =  bias if not bias is None else np.random.normal(0,1,size=(1, output_dim))
+        self.weights = weights if not weights is None else np.random.normal(0, np.sqrt(2/input_dim),size= (input_dim, output_dim)) 
+        self.bias =  bias if not bias is None else np.random.normal(0,np.sqrt(2/input_dim),size=(1, output_dim))
         self.activation = activation if not activation is None else sigmoid
         self.momentum_weights = np.zeros_like(self.weights)
         self.momentum_bias = np.zeros_like(self.bias)
@@ -123,34 +131,51 @@ class Layer():
 
 class MLP():
     
-    def __init__(self, input_dim=None, output_dim=None, hidden_dims=None):
+    def __init__(self, input_dim=None, output_dim=None, hidden_dims=None,loss_function=None, classification=False, output_activation=None):
         self.input_dim = input_dim
         self.output_dim = output_dim
         self.layers = []
-        if not input_dim is None and not output_dim is None and not hidden_dims is None:
+        self.classification = classification
+        if loss_function is not None:
+            self.loss_function =  loss_function
+        else:
+            self.loss_function = log_loss if classification else mean_squared_error
+        if input_dim is not None and  output_dim is not None and  hidden_dims is not None:
             # create this network automatically if all parameters are given
             self.layers.append(Layer(input_dim, hidden_dims[0], activation=sigmoid))
             for i in range(1, len(hidden_dims)):
                 self.layers.append(Layer(hidden_dims[i-1], hidden_dims[i], activation=sigmoid))
-            self.layers.append(Layer(hidden_dims[-1], output_dim, activation=linear))
+            if output_activation is not None:
+                output_activation = output_activation
+            else:
+                output_activation = softmax if classification else linear
+            self.layers.append(Layer(hidden_dims[-1], self.output_dim, activation=output_activation))
         
     
     def add(self, layer):
         self.layers.append(layer)
         
     
-    def predict(self, inputs):
+    def predict(self, inputs, probabilities=True):
         outputs = inputs
         for layer in self.layers:
             outputs = layer.forward(outputs)
+        if not probabilities:
+            return np.argmax(outputs, axis=1)
         return outputs
     
     
-    def fit(self, X, y, epochs, batch_size, learning_rate, shuffle=True, loss_stop=0.0001, momentum_coef=0.9, normalisation_coef=0.999, verbose=True):
+    def fit(self, X, y, epochs, batch_size, learning_rate, shuffle=True, score_stop=0.0001, momentum_coef=0.9, normalisation_coef=0.999, verbose=True, score_function=None):
         X = np.array(X).reshape(-1, self.input_dim)
+        y_true = np.array(y)
+        if self.classification:
+            y = pd.get_dummies(y)
         y = np.array(y).reshape(-1, self.output_dim)
-        start_time = time.time()
-        iter_loss = [mean_squared_error(y, self.predict(X))]
+        start_time = time.perf_counter()
+        
+        if score_function is None:
+            score_function = self.loss_function
+        iter_loss = [score_function(y_true, self.predict(X,probabilities=False))]
         times = [0]
         n_samples = X.shape[0]
         if batch_size == -1 or batch_size > n_samples:
@@ -181,7 +206,7 @@ class MLP():
                 
                 # forward pass
                 outputs = self.predict(X_batch)
-                loss = mean_squared_error(y_batch, outputs)
+                loss = self.loss_function(y_batch, outputs)
                 epoch_loss += loss
                 
                 # backward pass
@@ -192,24 +217,23 @@ class MLP():
                     layer.bias -= learning_rate * delta_bias
 
             
-            
-            loss_full = mean_squared_error(y, self.predict(X))
-            if loss_full < loss_stop:
-                iter_loss.append(loss_full)
-                times.append(time.time() - start_time)
+            score_full = score_function(y_true, self.predict(X, probabilities=False))
+            if self.classification and score_full > score_stop or (not self.classification and score_full < score_stop):
+                iter_loss.append(score_full)
+                times.append(time.perf_counter() - start_time)
                 epochs = epoch + 1
                 if verbose:
-                    print(f"Loss {loss_full} reached  after {epoch+1} epochs", end="\r")
+                    print(f"Score {score_full} reached  after {epoch+1} epochs \n", end="\r")
                 return times, iter_loss, epochs
             if (epoch+1)%10 == 0:
-                iter_loss.append(mean_squared_error(y, self.predict(X)))
-                times.append( time.time() - start_time)    
+                iter_loss.append(score_full)
+                times.append( time.perf_counter() - start_time)    
             
             if (epoch+1)%100 == 0 and verbose:
-                print(f"Epoch {epoch+1}/{epochs}, Loss: {epoch_loss/n_batches}",end="\r")
+                print(f"Epoch {epoch+1}/{epochs}, Loss: {epoch_loss/n_batches} ,Score: {score_full}",end="\r")
 
         return times, iter_loss, epochs
-
+    
         
     def get_weights(self):
         weights = []
@@ -232,7 +256,7 @@ class MLP():
         return summary_dict
     
     
-    def plot_weigths(self):
+    def plot_weights(self):
         weights = self.get_weights()
         biases = self.get_biases()
         
@@ -280,6 +304,44 @@ def plot_predictions(mlp:MLP, df_train:pd.DataFrame, df_test:pd.DataFrame):
     fig.suptitle("blue: true values, red: predicted values", fontsize=12)
     plt.subplots_adjust(top=0.87)
     warnings.filterwarnings('default')
+    
+    
+def plot_classification(mlp,df_train,df_test, some_error=False):
+    y_pred_test = mlp.predict(df_test[["x","y"]], probabilities=False)
+    errors_test = df_test["c"] != y_pred_test
+
+    y_pred = mlp.predict(df_train[["x","y"]],probabilities=False)
+    errors = df_train["c"] != y_pred
+    warnings.filterwarnings('ignore')
+
+    fig, axes = plt.subplots(2,2,figsize=(10,10))
+    if some_error:
+        axes[0,0] = sns.scatterplot(x="x", y="y", hue="c", data=df_train, ax=axes[0,0])
+        sns.scatterplot(x=df_train["x"][errors], y=df_train["y"][errors], hue=y_pred[errors],style=y_pred[errors], ax=axes[0,0],s=200, markers="x")
+        axes[1,0] = sns.scatterplot(x="x", y="y", hue="c", data=df_test, ax=axes[1,0])
+        sns.scatterplot(x=df_test["x"][errors_test], y=df_test["y"][errors_test], hue=y_pred_test[errors_test],style=y_pred_test[errors_test], ax=axes[1,0],s=200, markers="x")
+        
+    else:
+        axes[0,0] = sns.scatterplot(x="x", y="y", hue="c", data=df_train, ax=axes[0,0], palette=sns.light_palette("seagreen", as_cmap=True))
+        sns.scatterplot(x=df_train["x"][errors], y=df_train["y"][errors], hue=y_pred[errors],style=y_pred[errors], ax=axes[0,0],s=200, markers="x", palette=sns.color_palette("dark:salmon_r", as_cmap=True))
+        axes[1,0] = sns.scatterplot(x="x", y="y", hue="c", data=df_test, ax=axes[1,0], palette=sns.light_palette("seagreen", as_cmap=True))
+        sns.scatterplot(x=df_test["x"][errors_test], y=df_test["y"][errors_test], hue=y_pred_test[errors_test],style=y_pred_test[errors_test], ax=axes[1,0],s=200, markers="x", palette=sns.color_palette("dark:salmon_r", as_cmap=True))
+
+    axes[0,0].legend()
+    axes[0,0].set_title("Training set")
+    y_pred = mlp.predict(df_train[["x","y"]],probabilities=False)
+    axes[0,1] = sns.heatmap(confusion_matrix(df_train["c"],y_pred), annot=True, fmt="d", cmap="Blues",ax=axes[0,1], cbar=False)
+    axes[0,1].set_title(f"F1 score = {f1_score(df_train['c'],y_pred,average='macro'):.3f}")
+
+    axes[1,0].legend()
+    axes[1,0].set_title("Test set")
+    y_pred = mlp.predict(df_train[["x","y"]],probabilities=False)
+    axes[1,1] = sns.heatmap(confusion_matrix(df_test["c"],y_pred_test), annot=True, fmt="d", cmap="Blues",ax=axes[1,1], cbar=False)
+    axes[1,1].set_title(f"F1 score = {f1_score(df_test['c'],y_pred_test,average='macro'):.3f}")
+
+
+    warnings.filterwarnings('default')
+    
     
     
 def plot_data(title:str, df_train:pd.DataFrame, df_test:pd.DataFrame):
