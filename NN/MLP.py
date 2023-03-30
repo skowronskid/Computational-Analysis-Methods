@@ -31,6 +31,24 @@ def softmax(x,derivative = False):
     return exp_x / np.sum(exp_x, axis=1, keepdims=True)
 
 
+def tanh(x, derivative=False):
+    if derivative:
+        return 1 - np.power(np.tanh(x), 2)
+    return np.tanh(x)
+
+
+def relu(x, derivative=False):
+    if derivative:
+        return (x > 0).astype(x.dtype)
+    return np.maximum(x, 0)
+
+def leaky_relu(x, derivative=False, leaky_slope=0.01):
+    if derivative:
+        return (x > 0).astype(x.dtype) + leaky_slope * (x <= 0).astype(x.dtype)
+    return np.maximum(x, leaky_slope * x)
+     
+
+
 class Layer():
     def __init__(self, input_dim, output_dim, weights=None, bias=None,activation=None):
         # output dim is also the number of neurons in the layer
@@ -131,7 +149,7 @@ class Layer():
 
 class MLP():
     
-    def __init__(self, input_dim=None, output_dim=None, hidden_dims=None,loss_function=None, classification=False, output_activation=None):
+    def __init__(self, input_dim=None, output_dim=None, hidden_dims=None,loss_function=None, layers_activation = None,classification=False, output_activation=None):
         self.input_dim = input_dim
         self.output_dim = output_dim
         self.layers = []
@@ -142,7 +160,8 @@ class MLP():
             self.loss_function = log_loss if classification else mean_squared_error
         if input_dim is not None and  output_dim is not None and  hidden_dims is not None:
             # create this network automatically if all parameters are given
-            self.layers.append(Layer(input_dim, hidden_dims[0], activation=sigmoid))
+            layers_activation = layers_activation if layers_activation is not None else sigmoid
+            self.layers.append(Layer(input_dim, hidden_dims[0], activation=layers_activation))
             for i in range(1, len(hidden_dims)):
                 self.layers.append(Layer(hidden_dims[i-1], hidden_dims[i], activation=sigmoid))
             if output_activation is not None:
@@ -215,10 +234,10 @@ class MLP():
                     delta_weights, delta_bias, delta_outputs = layer.backward(delta_outputs,momentum_coef=momentum_coef, normalisation_coef=normalisation_coef)                   
                     layer.weights -= learning_rate * delta_weights
                     layer.bias -= learning_rate * delta_bias
-
             
-            score_full = score_function(y_true, self.predict(X, probabilities=False))
-            if self.classification and score_full > score_stop or (not self.classification and score_full < score_stop):
+            probabilities = False if self.classification else True #stupid but that's how I programmed it I guess...
+            score_full = score_function(y_true, self.predict(X, probabilities=probabilities))
+            if (self.classification and score_full > score_stop) or (not self.classification and score_full < score_stop):
                 iter_loss.append(score_full)
                 times.append(time.perf_counter() - start_time)
                 epochs = epoch + 1
@@ -229,8 +248,11 @@ class MLP():
                 iter_loss.append(score_full)
                 times.append( time.perf_counter() - start_time)    
             
-            if (epoch+1)%100 == 0 and verbose:
+            if (epoch+1)%100 == 0 and verbose and self.classification:
                 print(f"Epoch {epoch+1}/{epochs}, Loss: {epoch_loss/n_batches} ,Score: {score_full}",end="\r")
+            elif (epoch+1)%100 == 0 and verbose and not self.classification:
+                print(f"Epoch {epoch+1}/{epochs}, Loss: {epoch_loss/n_batches}",end="\r")
+                
 
         return times, iter_loss, epochs
     
@@ -357,6 +379,7 @@ def plot_data(title:str, df_train:pd.DataFrame, df_test:pd.DataFrame):
     
 
 def benchmark(x,y,hidden,epochs,range_, learning_rate_base,learning_rate_rmsprop,learning_rate_momentum,learning_rate_adam,momentum_coef,normalisation_coef, adam_coefs, batch_size, loss_stop):
+    # this is a benchmark for lab3 regarding different optimizers 
     input = x.shape[1] if len(x.shape) > 1 else 1
     output =  y.shape[1] if len(y.shape) > 1 else 1
     end_time_base = []
@@ -425,7 +448,7 @@ def benchmark(x,y,hidden,epochs,range_, learning_rate_base,learning_rate_rmsprop
                         "end_mse_base":end_mse_base,"end_mse_rmsprop":end_mse_rmsprop,"end_mse_momentum":end_mse_momentum,"end_mse_adam":end_mse_adam})
     
     
-    # # --- Plotting ---
+    # --- Plotting ---
     base_index = results.index[results['end_time_base']==results['end_time_base'].quantile(interpolation='nearest')][0]
     rmsprop_index = results.index[results['end_time_rmsprop']==results['end_time_rmsprop'].quantile(interpolation='nearest')][0]
     momentum_index = results.index[results['end_time_momentum']==results['end_time_momentum'].quantile(interpolation='nearest')][0]
@@ -458,4 +481,49 @@ def benchmark(x,y,hidden,epochs,range_, learning_rate_base,learning_rate_rmsprop
     
     return results
 
+
+def coefs_search(X, y,input_dim, output_dim, hidden_dims, layers_activation,classification, epochs, batch_size,score_stop, learning_rates=[0.1,0.01,0.001], momentum_coefs=[0.2,0.5,0.9], normalisation_coefs=[0.9,0.99,0.999], score_function=None, debug=False, allow_warnings=False ):
+    warnings.filterwarnings("error") if not allow_warnings else warnings.filterwarnings("ignore")
+    for learning_rate in learning_rates:
+        for momentum_coef in momentum_coefs:
+            for normalisation_coef in normalisation_coefs:
+                mlp = MLP(input_dim, output_dim, hidden_dims, layers_activation=layers_activation, classification=classification)
+                try:
+                    times, loss, epochs =  mlp.fit(X,y,epochs=epochs, batch_size=batch_size, learning_rate=learning_rate, momentum_coef=momentum_coef, normalisation_coef=normalisation_coef, 
+                            shuffle=True,score_stop = score_stop, score_function = score_function, verbose=False)
+                except Exception as e:
+                    if debug:
+                        print(e)
+                    print(f"Failure for {learning_rate=}, {momentum_coef=}, {normalisation_coef=}")
+                else: 
+                    print(f"{learning_rate=}, {momentum_coef=}, {normalisation_coef=} |  loss = {loss[-1]} time = {times[-1]}")
+                    
+    warnings.filterwarnings("default")
+
+
+
+def benchmark_architecture(X, y,sample_size,input_dim, output_dim, all_hidden_dims, layers_activation,classification, epochs, batch_size, score_stop, learning_rates, coefs, score_function=None):
+    # this is a benchmark for lab5 to compaer the perfomrance of different activation functions and different architectures
+    times_list = []
+    loss_list = []
+    df = pd.DataFrame()
+    activation_name = layers_activation.__name__
+    for j,hidden_dims, learning_rate, coef in zip(range(len(learning_rates)),all_hidden_dims, learning_rates, coefs):
+        end_times_list = []
+        end_loss_list = []
+        end_epochs_list = []
+        for i in range(sample_size):
+            print(f"Architecture {j+1}/{len(learning_rates)} - Sample {i+1}/{sample_size}", end="\r")
+            mlp = MLP(input_dim=input_dim, output_dim=output_dim, hidden_dims=hidden_dims, layers_activation=layers_activation, classification=classification)
+            if score_function is not None:
+                times, loss, epochs = mlp.fit(X,y, epochs=epochs, learning_rate=learning_rate, batch_size=batch_size, momentum_coef=coef[0], normalisation_coef=coef[1], score_stop=score_stop,score_function=score_function, verbose=False)
+            else:
+                times, loss, epochs = mlp.fit(X,y, epochs=epochs, learning_rate=learning_rate, batch_size=batch_size, momentum_coef=coef[0], normalisation_coef=coef[1], score_stop=score_stop, verbose=False)
+            times_list.append(times)
+            loss_list.append(loss)
+            end_times_list.append(times[-1])
+            end_loss_list.append(loss[-1])
+        df[f"end_time_{activation_name}_{len(hidden_dims)}x{hidden_dims[0]}"] = end_times_list
+        df[f"end_loss_{activation_name}_{len(hidden_dims)}x{hidden_dims[0]}"] = end_loss_list
+    return df, times_list, loss_list
 
