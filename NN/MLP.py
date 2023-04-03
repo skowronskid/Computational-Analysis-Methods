@@ -8,6 +8,7 @@ from sklearn.metrics import mean_squared_error, log_loss, f1_score, confusion_ma
 import warnings
 import time
 from functools import partial
+import copy
 
 
 
@@ -184,17 +185,38 @@ class MLP():
         return outputs
     
     
-    def fit(self, X, y, epochs, batch_size, learning_rate, shuffle=True, score_stop=0.0001, momentum_coef=0.9, normalisation_coef=0.999, verbose=True, score_function=None):
-        X = np.array(X).reshape(-1, self.input_dim)
-        y_true = np.array(y)
-        if self.classification:
-            y = pd.get_dummies(y)
-        y = np.array(y).reshape(-1, self.output_dim)
+    def fit(self, X, y, epochs, batch_size, learning_rate, shuffle=True, score_stop=0.0001, momentum_coef=0.9, normalisation_coef=0.999, regularisation_coef=0, validation_split=0, val_patience=10,verbose=True, score_function=None):            
+        
+        #preperation...
         start_time = time.perf_counter()
         
         if score_function is None:
             score_function = self.loss_function
-        iter_loss = [score_function(y_true, self.predict(X,probabilities=False))]
+        
+        X = np.array(X).reshape(-1, self.input_dim)
+        y_true = np.array(y)
+        
+        if self.classification:
+            y = pd.get_dummies(y)
+        y = np.array(y).reshape(-1, self.output_dim)
+        probabilities = False if self.classification else True #stupid but that's how I programmed it I guess...
+        if 1 > validation_split > 0:
+            indices = np.random.permutation(X.shape[0])
+            split_index = int((1-validation_split) * X.shape[0])
+            train_indices = indices[:split_index]
+            val_indices = indices[split_index:]
+
+            # use the indices to split the arrays into training and validation sets
+            X_train, X_val = X[train_indices], X[val_indices]
+            y_train, y_val = y[train_indices], y[val_indices]
+            y_true_train, y_true_val = y_true[train_indices], y_true[val_indices]
+            best_val_score = score_function(y_true_val, self.predict(X_val, probabilities=probabilities))
+            iter_val_score = [best_val_score]
+            X, y, y_true = X_train, y_train, y_true_train 
+            
+        iter_loss = [self.loss_function(y, self.predict(X))] #+ self.weights_regularisation(regularisation_coef)]
+
+        best_loss = np.inf
         times = [0]
         n_samples = X.shape[0]
         if batch_size == -1 or batch_size > n_samples:
@@ -207,10 +229,11 @@ class MLP():
         if not (normalisation_coef >= 0 and normalisation_coef < 1):
             raise AttributeError("Normalisation decay coefficient should be in [0,1)")
         
+    
+        worse_score_epochs = 0 #in a row
+        #end of =preperation...
         
         for epoch in range(epochs):
-            epoch_loss = 0
-            
             if shuffle:
                 permutation = np.random.permutation(n_samples)
                 X_ = X[permutation]
@@ -225,36 +248,60 @@ class MLP():
                 
                 # forward pass
                 outputs = self.predict(X_batch)
-                loss = self.loss_function(y_batch, outputs)
-                epoch_loss += loss
                 
                 # backward pass
-                delta_outputs = (outputs - y_batch) / batch_size
+                delta_outputs = (outputs - y_batch)/ batch_size
                 for layer in reversed(self.layers):
                     delta_weights, delta_bias, delta_outputs = layer.backward(delta_outputs,momentum_coef=momentum_coef, normalisation_coef=normalisation_coef)                   
-                    layer.weights -= learning_rate * delta_weights
+                    layer.weights -= learning_rate * (delta_weights + regularisation_coef * layer.weights)
                     layer.bias -= learning_rate * delta_bias
             
-            probabilities = False if self.classification else True #stupid but that's how I programmed it I guess...
+            loss_full = self.loss_function(y_, self.predict(X_))
+            if loss_full < best_loss:
+                best_loss = loss_full
+                best_model = copy.deepcopy(self)
             score_full = score_function(y_true, self.predict(X, probabilities=probabilities))
+            
+            #early stops
+            if 1 > validation_split > 0:
+                val_score = score_function(y_true_val, self.predict(X_val, probabilities=probabilities))
+                if (self.classification and val_score <= best_val_score) or (not self.classification and val_score >= best_val_score):
+                    worse_score_epochs += 1
+                else:
+                    worse_score_epochs = 0 
+                    best_val_score = val_score
+                    best_model = copy.deepcopy(self) #model with best validation loss
+                if worse_score_epochs == val_patience:   # loss is worse for val_patiance epochs in a row
+                    iter_loss.append(loss_full)
+                    #iter_val_score.append(val_score)
+                    times.append(time.perf_counter() - start_time)
+                    epochs = epoch + 1
+                    if verbose:
+                        print(f"Finished after {epoch+1} epochs by validation patience Score: {score_full}, Loss: {loss_full}, Best validation score {val_score}", end="\r")
+                    return times, iter_loss, epochs, loss_full, best_model
+                    
+
             if (self.classification and score_full > score_stop) or (not self.classification and score_full < score_stop):
-                iter_loss.append(score_full)
+                iter_loss.append(loss_full)
+                #iter_val_score.append(score_function(y_true_val, self.predict(X_val,probabilities=probabilities)))
                 times.append(time.perf_counter() - start_time)
                 epochs = epoch + 1
                 if verbose:
-                    print(f"Score {score_full} reached  after {epoch+1} epochs \n", end="\r")
-                return times, iter_loss, epochs
+                    print(f"Score {score_full} reached  after {epoch+1} epochs", end="\r")
+                return times, iter_loss, epochs, best_loss, best_model
+
+            
             if (epoch+1)%10 == 0:
-                iter_loss.append(score_full)
+                iter_loss.append(loss_full)
                 times.append( time.perf_counter() - start_time)    
             
             if (epoch+1)%100 == 0 and verbose and self.classification:
-                print(f"Epoch {epoch+1}/{epochs}, Loss: {epoch_loss/n_batches} ,Score: {score_full}",end="\r")
+                print(f"Epoch {epoch+1}/{epochs}, Loss: {loss_full} ,Score: {score_full}",end="\r")
             elif (epoch+1)%100 == 0 and verbose and not self.classification:
-                print(f"Epoch {epoch+1}/{epochs}, Loss: {epoch_loss/n_batches}",end="\r")
+                print(f"Epoch {epoch+1}/{epochs}, Loss: {loss_full}",end="\r")
                 
 
-        return times, iter_loss, epochs
+        return times, iter_loss, epochs, best_loss, best_model
     
         
     def get_weights(self):
