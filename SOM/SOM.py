@@ -38,13 +38,15 @@ class SOM:
         
         
 
-    def train(self, X, epochs, neighborhood_function = gaussian, learning_rate=0.1, sigma=None,learning_rate_decay=None):
+    def train(self, X, epochs, neighborhood_function = gaussian, learning_rate=0.1, sigma=None,learning_rate_decay=None, verbose=False):
         if sigma is None:
             sigma = np.max(self.map_size)
         if learning_rate_decay is None:
             learning_rate_decay = epochs
         
         for epoch in range(epochs):
+            if verbose:
+                print(f"Epoch {epoch+1}/{epochs}",end="\r")
             current_learning_rate = learning_decay(learning_rate, epoch, learning_rate_decay)
             permutation = np.random.permutation(X.shape[0])
             X_ = X[permutation]
