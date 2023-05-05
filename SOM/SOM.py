@@ -25,14 +25,13 @@ class SOM:
         self.input_dim = input_dim
         self.map_size = map_size
         self.topology = topology
-        if topology == 'rectangular':
-            self.weights = np.random.randn(*map_size, input_dim)
-        elif topology == 'hexagonal':
-            if X is None:
-                raise ValueError('X must be provided for hexagonal topology')
-            self.weights = np.random.uniform(np.min(X), np.max(X), size=(map_size[0]*map_size[1], input_dim))
-        else:
-            raise ValueError('Topology must be either "rectangular" or "hexagonal"')
+        self.weights = np.random.randn(*map_size, input_dim)
+        if topology == "rectangular":
+            self.neighbor_indices = np.indices(self.map_size)
+        if topology == "hexagonal":
+            self.neighbor_indices = np.indices(self.map_size,dtype=np.float64)
+            self.neighbor_indices[1][::2] += 1/2
+            self.neighbor_indices[0] *= np.sqrt(3)/2
         
         
         
@@ -46,7 +45,7 @@ class SOM:
         
         for epoch in range(epochs):
             if verbose:
-                print(f"Epoch {epoch+1}/{epochs}",end="\r")
+                print(f"\r Epoch {epoch+1}/{epochs}",end='')
             current_learning_rate = learning_decay(learning_rate, epoch, learning_rate_decay)
             permutation = np.random.permutation(X.shape[0])
             X_ = X[permutation]
@@ -63,8 +62,7 @@ class SOM:
                 winner = np.unravel_index(np.argmin(distances), distances.shape)
                 
                 # Compute the neighborhood function centered around the winner
-                neighbor_indices = np.indices(self.map_size)
-                neighbor_distances = np.linalg.norm(neighbor_indices - np.array(winner)[:, np.newaxis, np.newaxis], axis=0)
+                neighbor_distances = np.linalg.norm(self.neighbor_indices - np.array(winner)[:, np.newaxis, np.newaxis], axis=0)
                 neighborhood = neighborhood_function(neighbor_distances, sigma)
                 
                 # Update the weights of all neurons based on the neighborhood function and learning rate
