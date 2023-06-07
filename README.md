@@ -15,4 +15,4 @@ EA implementation:
 
 ___
 
-Pozdro dla danonków, które znalazły repo.
+Pozdro dla danonków, które znalazły repo. Możecie patrzeć na branche w zależności od tego w jakim momencie semestru jesteście.
